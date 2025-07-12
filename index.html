@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Crypto Live Prices</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background-color: #0d1117;
+      color: white;
+    }
+    h1 {
+      text-align: center;
+      margin: 20px 0;
+      font-size: 1.5em;
+      color: #58a6ff;
+    }
+    .container {
+      max-width: 600px;
+      margin: auto;
+      padding-bottom: 50px;
+    }
+    .coin {
+      display: flex;
+      align-items: center;
+      padding: 14px 20px;
+      border-bottom: 1px solid #1f2937;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .coin:hover {
+      background-color: #161b22;
+    }
+    .coin img {
+      width: 32px;
+      height: 32px;
+      margin-right: 15px;
+    }
+    .coin-info {
+      flex-grow: 1;
+      text-align: left;
+    }
+    .coin-symbol {
+      font-size: 0.85em;
+      color: #8b949e;
+    }
+    .coin-name {
+      font-size: 1.1em;
+      font-weight: 500;
+      color: #ffffff;
+    }
+    .coin-price {
+      font-size: 1em;
+      font-weight: bold;
+      color: #ffffff;
+      margin-right: 10px;
+    }
+    .arrow {
+      font-size: 1.2em;
+      color: #8b949e;
+    }
+    .chart-container {
+      background: #161b22;
+      padding: 10px;
+      border-top: 1px solid #1f2937;
+      display: none;
+    }
+    canvas {
+      background: #0d1117;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Crypto Price Tracker 🚀</h1>
+  <div class="container" id="coinList">Loading...</div>
+
+  <script>
+    let coinData = [];
+    let chartRefs = {};
+    let loadingChart = false;
+
+    async function fetchCoins() {
+      const res = await fetch(
+        'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=50&page=1&sparkline=false'
+      );
+      const data = await res.json();
+      coinData = data;
+      renderCoins();
+    }
+
+    function renderCoins() {
+      const container = document.getElementById("coinList");
+      container.innerHTML = "";
+      coinData.forEach(coin => {
+        const coinId = coin.id;
+
+        const div = document.createElement("div");
+        div.className = "coin";
+        div.innerHTML = `
+          <img src="${coin.image}" alt="${coin.name}">
+          <div class="coin-info">
+            <div class="coin-symbol">${coin.symbol.toUpperCase()}</div>
+            <div class="coin-name">${coin.name}</div>
+          </div>
+          <div class="coin-price" id="price-${coinId}">$${coin.current_price.toLocaleString()}</div>
+          <div class="arrow" id="arrow-${coinId}">▶</div>
+        `;
+
+        const chartDiv = document.createElement("div");
+        chartDiv.className = "chart-container";
+        chartDiv.id = `chart-container-${coinId}`;
+        chartDiv.innerHTML = `<canvas id="chart-${coinId}" height="200"></canvas>`;
+
+        div.querySelector(`#arrow-${coinId}`).addEventListener("click", () => {
+          toggleChart(coinId);
+        });
+
+        container.appendChild(div);
+        container.appendChild(chartDiv);
+      });
+    }
+
+    async function toggleChart(coinId, retry = false) {
+      if (loadingChart) return;
+      loadingChart = true;
+
+      const chartDiv = document.getElementById(`chart-container-${coinId}`);
+      const canvas = document.getElementById(`chart-${coinId}`);
+
+      // Hide others
+      document.querySelectorAll(".chart-container").forEach(div => {
+        if (div.id !== `chart-container-${coinId}`) div.style.display = "none";
+      });
+
+      Object.keys(chartRefs).forEach(id => {
+        if (id !== coinId) {
+          chartRefs[id].destroy();
+          delete chartRefs[id];
+        }
+      });
+
+      if (chartDiv.style.display === "block") {
+        chartDiv.style.display = "none";
+        if (chartRefs[coinId]) {
+          chartRefs[coinId].destroy();
+          delete chartRefs[coinId];
+        }
+        loadingChart = false;
+        return;
+      }
+
+      try {
+        const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}/market_chart?vs_currency=usd&days=30`);
+        if (!res.ok) throw new Error("Failed to fetch");
+
+        const data = await res.json();
+        const labels = data.prices.map(p => new Date(p[0]).toLocaleDateString());
+        const prices = data.prices.map(p => p[1]);
+
+        chartDiv.style.display = "block";
+        const ctx = canvas.getContext("2d");
+        const chart = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels,
+            datasets: [{
+              label: "30-Day Price",
+              data: prices,
+              borderColor: "#58a6ff",
+              backgroundColor: "rgba(88,166,255,0.1)",
+              fill: true,
+              tension: 0.3
+            }]
+          },
+          options: {
+            scales: {
+              x: { ticks: { color: '#aaa' } },
+              y: { ticks: { color: '#aaa' } }
+            },
+            plugins: {
+              legend: {
+                labels: { color: 'white' }
+              }
+            }
+          }
+        });
+
+        chartRefs[coinId] = chart;
+      } catch (err) {
+        if (!retry) {
+          // Retry once after 1 second
+          setTimeout(() => toggleChart(coinId, true), 1000);
+        } else {
+          chartDiv.innerHTML = `<p style="color:red;padding:10px;">⚠️ Could not load chart for ${coinId}. Try again later.</p>`;
+        }
+      } finally {
+        loadingChart = false;
+      }
+    }
+
+    async function refreshPrices() {
+      try {
+        const res = await fetch(
+          'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&per_page=50&page=1&sparkline=false'
+        );
+        const data = await res.json();
+        data.forEach(coin => {
+          const priceEl = document.getElementById(`price-${coin.id}`);
+          if (priceEl) {
+            priceEl.textContent = `$${coin.current_price.toLocaleString()}`;
+          }
+        });
+      } catch (err) {
+        console.log("Live price update failed.");
+      }
+    }
+
+    fetchCoins();
+    setInterval(refreshPrices, 5000);
+  </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
